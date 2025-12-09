@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>全景图生成3D场景</title>
+    <style>
+        body { margin: 0; background: #050505; overflow: hidden; font-family: 'Segoe UI', sans-serif; }
+        
+        /* --- 1. UI 面板 (层级最高) --- */
+        .ui {
+            position: absolute; left: 0; top: 0; bottom: 0; width: 320px;
+            background: #111; 
+            border-right: 1px solid #333;
+            padding: 20px; 
+            color: #fff; 
+            z-index: 500; 
+            display: flex; flex-direction: column; gap: 20px;
+            box-shadow: 10px 0 30px rgba(0,0,0,0.5);
+        }
+
+        h2 { margin: 0; color: #00f2ea; font-weight: 900; letter-spacing: 2px; font-size: 24px; }
+        
+        .upload-area {
+            border: 2px dashed #444; 
+            border-radius: 8px;
+            padding: 40px 20px; 
+            text-align: center; 
+            cursor: pointer;
+            transition: 0.3s; 
+            background: rgba(255,255,255,0.02);
+            color: #888;
+        }
+        .upload-area:hover { border-color: #00f2ea; color: #fff; background: rgba(0, 242, 234, 0.05); }
+        .upload-icon { font-size: 30px; margin-bottom: 10px; display: block; }
+        
+        .preview-box {
+            width: 100%; height: 100px; 
+            background: #000; border: 1px solid #333; 
+            border-radius: 4px; overflow: hidden; display: none;
+        }
+        #preview { width: 100%; height: 100%; object-fit: cover; }
+
+        .control-group { margin-bottom: 15px; }
+        .label { display: flex; justify-content: space-between; font-size: 12px; color: #aaa; margin-bottom: 8px; }
+        .val { color: #00f2ea; font-family: monospace; }
+        
+        input[type=range] {
+            width: 100%; height: 4px; background: #333; border-radius: 2px; -webkit-appearance: none;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; width: 16px; height: 16px; 
+            background: #fff; border-radius: 50%; cursor: pointer; margin-top: -6px;
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; background: #333;
+        }
+
+        .gen-btn {
+            margin-top: auto;
+            padding: 18px; 
+            background: linear-gradient(90deg, #00f2ea, #0080ff); 
+            border: none; border-radius: 6px;
+            color: #000; font-weight: 800; font-size: 14px;
+            cursor: pointer; text-transform: uppercase; letter-spacing: 1px;
+            transition: 0.2s;
+        }
+        .gen-btn:disabled { background: #333; color: #666; cursor: not-allowed; }
+        .gen-btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 0 20px rgba(0, 242, 234, 0.3); }
+
+        /* --- 2. 画布区域 --- */
+        .canvas-area {
+            position: absolute; left: 320px; top: 0; right: 0; bottom: 0;
+            background: #000;
+            z-index: 1;
+        }
+        canvas { display: block; width: 100%; height: 100%; outline: none; }
+
+        /* --- 3. 状态覆盖层 (只覆盖画布) --- */
+        .status-overlay {
+            position: absolute; left: 0; top: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8);
+            display: flex; flex-direction: column; 
+            justify-content: center; align-items: center;
+            color: #fff; z-index: 10;
+            pointer-events: none; /* 允许鼠标穿透 */
+            transition: opacity 0.3s;
+        }
+        .status-overlay.hidden { opacity: 0; }
+        
+        .spinner {
+            width: 50px; height: 50px; 
+            border: 4px solid rgba(255,255,255,0.1); 
+            border-top-color: #00f2ea; 
+            border-radius: 50%; 
+            animation: spin 1s infinite linear;
+            margin-bottom: 20px;
+        }
+        @keyframes spin { to {transform: rotate(360deg);} }
+
+    </style>
+</head>
+<body>
+
+<div class="ui">
+    <h2>全景图生成3D场景（Panoramic image to generate 3D scene）</h2>
+    
+    <div class="upload-area" onclick="document.getElementById('file').click()">
+        <span class="upload-icon">📂</span>
+        <span>点击上传全景图</span>
+        <input type="file" id="file" hidden accept="image/*">
+    </div>
+
+    <div class="preview-box" id="previewContainer">
+        <img id="preview">
+    </div>
+
+    <div style="margin-top: 10px; border-top: 1px solid #333; padding-top: 20px;">
+        <div class="control-group">
+            <div class="label"><span>笔触拉伸 (Flow)</span><span class="val" id="vFlow">0</span></div>
+            <input type="range" id="iFlow" min="0" max="8.0" step="0.1" value="0">
+        </div>
+        <div class="control-group">
+            <div class="label"><span>笔触大小 (Size)</span><span class="val" id="vSize">0.5</span></div>
+            <input type="range" id="iSize" min="0.1" max="4.0" step="0.1" value="0.5">
+        </div>
+        <div class="control-group">
+            <div class="label"><span>融合浓度 (Opacity)</span><span class="val" id="vOpac">0.5</span></div>
+            <input type="range" id="iOpac" min="0.5" max="1.0" step="0.05" value="0.5">
+        </div>
+        <div class="control-group">
+            <div class="label"><span>密度 (Density)</span><span class="val" id="vDens">1800</span></div>
+            <input type="range" id="iDens" min="50" max="2600" step="10" value="1800">
+        </div>
+    </div>
+
+    <button id="genBtn" class="gen-btn" disabled>等待图片上传...</button>
+</div>
+
+<div class="canvas-area">
+    <canvas id="canvas"></canvas>
+    
+    <div class="status-overlay" id="status">
+        <div style="font-size: 16px; color: #666; letter-spacing: 1px;" id="statusText">请在左侧上传图片</div>
+    </div>
+    
+    <div class="status-overlay hidden" id="loading">
+        <div class="spinner"></div>
+        <div style="color: #00f2ea; letter-spacing: 2px;">正在生成笔触场...</div>
+    </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://unpkg.com/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+<script>
+    // --- 1. 笔触纹理生成 ---
+    function createBrushTexture() {
+        const size = 256;
+        const canvas = document.createElement('canvas');
+        canvas.width = size; canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        
+        // 绘制更像笔触的形状（两头尖的椭圆）
+        const grad = ctx.createRadialGradient(size/2, size/2, 0, size/2, size/2, size/2);
+        grad.addColorStop(0, 'rgba(255,255,255,1)');
+        grad.addColorStop(0.5, 'rgba(255,255,255,0.8)'); // 核心区域保持高不透明度
+        grad.addColorStop(0.8, 'rgba(255,255,255,0.2)');
+        grad.addColorStop(1, 'rgba(255,255,255,0)');
+        
+        ctx.fillStyle = grad;
+        ctx.fillRect(0,0,size,size);
+        
+        const tex = new THREE.CanvasTexture(canvas);
+        tex.anisotropy = 16;
+        return tex;
+    }
+
+    // --- 全局变量 ---
+    let scene, camera, renderer, controls, mesh;
+    let sourceImg;
+    const brushTex = createBrushTexture();
+    
+    const ui = {
+        file: document.getElementById('file'),
+        preview: document.getElementById('preview'),
+        previewBox: document.getElementById('previewContainer'),
+        btn: document.getElementById('genBtn'),
+        status: document.getElementById('status'),
+        statusText: document.getElementById('statusText'),
+        loading: document.getElementById('loading'),
+        canvas: document.getElementById('canvas'),
+        // sliders
+        flow: document.getElementById('iFlow'),
+        size: document.getElementById('iSize'),
+        opac: document.getElementById('iOpac'),
+        dens: document.getElementById('iDens')
+    };
+
+    // UI 绑定
+    ['Flow','Size','Opac','Dens'].forEach(k => {
+        const i = document.getElementById('i'+k);
+        const v = document.getElementById('v'+k);
+        i.addEventListener('input', e => {
+            v.innerText = e.target.value;
+            if(mesh && k === 'Opac') mesh.material.opacity = parseFloat(e.target.value);
+        });
+    });
+
+    // --- Three.js 初始化 ---
+    function init() {
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x050505);
+        scene.fog = new THREE.FogExp2(0x050505, 0.002);
+        
+        const w = ui.canvas.clientWidth;
+        const h = ui.canvas.clientHeight;
+
+        camera = new THREE.PerspectiveCamera(60, w/h, 0.1, 1000);
+        camera.position.set(0, 0, 0.1);
+
+        renderer = new THREE.WebGLRenderer({ canvas: ui.canvas, antialias: true });
+        renderer.setSize(w, h);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        
+        controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.rotateSpeed = 0.5;
+        controls.enablePan = false;
+
+        window.addEventListener('resize', () => {
+            const nw = ui.canvas.parentElement.clientWidth;
+            const nh = ui.canvas.parentElement.clientHeight;
+            camera.aspect = nw/nh;
+            camera.updateProjectionMatrix();
+            renderer.setSize(nw, nh);
+        });
+
+        animate();
+    }
+
+    // --- 键盘控制逻辑 ---
+    const keys = { w:false, a:false, s:false, d:false, q:false, e:false };
+    const moveSpeed = 0.5; // 移动速度
+
+    window.addEventListener('keydown', (e) => {
+        const key = e.key.toLowerCase();
+        if(keys.hasOwnProperty(key)) keys[key] = true;
+    });
+    window.addEventListener('keyup', (e) => {
+        const key = e.key.toLowerCase();
+        if(keys.hasOwnProperty(key)) keys[key] = false;
+    });
+
+// --- 动画循环 ---
+function animate() {
+        requestAnimationFrame(animate);
+
+        // 检测是否有按键按下
+        if(keys.w || keys.s || keys.a || keys.d || keys.q || keys.e) {
+            
+            // 获取当前朝向
+            const forward = new THREE.Vector3();
+            camera.getWorldDirection(forward);
+            forward.y = 0; 
+            forward.normalize();
+
+            const right = new THREE.Vector3();
+            right.crossVectors(forward, camera.up).normalize();
+
+            // 计算移动向量 (Delta)
+            const delta = new THREE.Vector3();
+
+            if(keys.w) delta.addScaledVector(forward, moveSpeed);
+            if(keys.s) delta.addScaledVector(forward, -moveSpeed);
+            if(keys.a) delta.addScaledVector(right, -moveSpeed);
+            if(keys.d) delta.addScaledVector(right, moveSpeed);
+            if(keys.e) delta.y += moveSpeed;
+            if(keys.q) delta.y -= moveSpeed;
+
+            
+            // 同时移动摄像机 和 轨道控制器的聚焦点(Target)
+            camera.position.add(delta);
+            controls.target.add(delta);
+        }
+
+        controls.update();
+        renderer.render(scene, camera);
+    }
+
+    // --- 图片逻辑 ---
+    ui.file.addEventListener('change', e => {
+        const f = e.target.files[0];
+        if(!f) return;
+        
+        const reader = new FileReader();
+        reader.onload = evt => {
+            const img = new Image();
+            img.onload = () => {
+                sourceImg = img;
+                ui.preview.src = img.src;
+                ui.previewBox.style.display = 'block';
+                
+                ui.btn.disabled = false;
+                ui.btn.innerText = "生成场景(generate a scene)";
+                ui.statusText.innerText = "图片已就绪，点击生成";
+                ui.statusText.style.color = "#00f2ea";
+            }
+            img.src = evt.target.result;
+        }
+        reader.readAsDataURL(f);
+    });
+
+    ui.btn.addEventListener('click', () => {
+        ui.loading.classList.remove('hidden'); // 显示 loading
+        ui.status.classList.add('hidden');     // 隐藏文字提示
+        
+        // 给 UI 一点时间渲染 loading
+        setTimeout(() => {
+            generateSplatScene();
+            ui.loading.classList.add('hidden');
+        }, 100);
+    });
+
+    // --- 核心生成逻辑 (V5版) ---
+    function generateSplatScene() {
+        if(mesh) {
+            scene.remove(mesh);
+            mesh.geometry.dispose();
+            mesh.material.dispose();
+        }
+
+        const w = 20480;
+        const h = Math.floor(sourceImg.height * (w/sourceImg.width));
+        const cvs = document.createElement('canvas'); cvs.width=w; cvs.height=h;
+        const ctx = cvs.getContext('2d');
+        ctx.drawImage(sourceImg, 0,0,w,h);
+        const data = ctx.getImageData(0,0,w,h).data;
+
+        const density = parseInt(ui.dens.value);
+        const flowFactor = parseFloat(ui.flow.value);
+        const baseSize = parseFloat(ui.size.value);
+        
+        const count = density * (density * 2) * 2; 
+
+        // 使用 PlaneGeometry 实现可旋转的笔触
+        const geometry = new THREE.PlaneGeometry(1, 1);
+        
+        const material = new THREE.MeshBasicMaterial({
+            map: brushTex,
+            color: 0xffffff,
+            transparent: true,
+            opacity: parseFloat(ui.opac.value),
+            side: THREE.DoubleSide,
+            depthWrite: false, // 允许叠加
+            blending: THREE.NormalBlending, 
+            alphaTest: 0.1
+        });
+
+        mesh = new THREE.InstancedMesh(geometry, material, count);
+        mesh.frustumCulled = false; // 防止视角剔除
+
+        const dummy = new THREE.Object3D();
+        const _color = new THREE.Color();
+        let idx = 0;
+        const radius = 200;
+
+        for(let i=0; i<density; i++) {
+            for(let j=0; j<density*2; j++) {
+                const u = j / (density*2);
+                const v = i / density;
+
+                const px = Math.floor(u*(w-1));
+                const py = Math.floor(v*(h-1));
+                const pi = (py*w+px)*4;
+
+                const r = data[pi]/255;
+                const g = data[pi+1]/255;
+                const b = data[pi+2]/255;
+
+                // 计算流向
+                const piR = (py*w + Math.min(w-1, px+1))*4;
+                const piD = (Math.min(h-1, py+1)*w + px)*4;
+                const dx = (data[piR] - data[pi]) / 255;
+                const dy = (data[piD] - data[pi]) / 255;
+                const magnitude = Math.sqrt(dx*dx + dy*dy);
+                const angle = Math.atan2(dy, dx); 
+
+                const phi = v * Math.PI;
+                const theta = u * Math.PI * 2;
+
+                for(let layer=0; layer<1; layer++) {
+                    const layerR = radius + (layer-0.5)*2.0;
+                    
+                    const x = layerR * Math.sin(phi) * Math.cos(theta);
+                    const y = layerR * Math.cos(phi);
+                    const z = layerR * Math.sin(phi) * Math.sin(theta);
+                    dummy.position.set(x, y, z);
+                    
+                    dummy.lookAt(0,0,0); // 面向球心
+
+                    // 笔触逻辑
+                    // 1. 提高边缘检测门槛，减少杂乱的细线条
+                    if(magnitude > 0.15) {
+                        // 有边缘：旋转并拉伸
+                        dummy.rotateZ(angle); 
+                        // 2. 限制最大拉伸长度 (Math.min)，防止笔触变得太长像电线
+                        // 3. 增加基础宽度 (* 0.9 而不是 0.5)，让笔触更饱满，消除“划痕感”
+                        const stretch = Math.min(3.0, 1 + magnitude * flowFactor); 
+                        dummy.scale.set(baseSize * 0.9, baseSize * stretch, 1);
+                    } else {
+                        // 无边缘：随机大块涂抹
+                        dummy.rotateZ(Math.random() * 3.14);
+                        dummy.scale.set(baseSize * 2.5, baseSize * 2.5, 1);
+                    }
+
+                    dummy.updateMatrix();
+                    mesh.setMatrixAt(idx, dummy.matrix);
+
+                    _color.setRGB(r, g, b);
+                    _color.multiplyScalar(1.3); // 增加一点亮度
+                    mesh.setColorAt(idx, _color);
+
+                    idx++;
+                }
+            }
+        }
+
+        mesh.instanceMatrix.needsUpdate = true;
+        mesh.instanceColor.needsUpdate = true;
+        scene.add(mesh);
+    }
+
+    init();
+</script>
+</body>
+</html>
